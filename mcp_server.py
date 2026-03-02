@@ -42,7 +42,7 @@ def resume_session(session_id: str) -> str:
     Args:
         session_id: Claude Code session UUID (e.g. '54c77e5a-a32a-42c7-9701-58ebe6c500b2')
     """
-    _open_terminal_tab(f"claude --resume {session_id}")
+    _open_terminal_tab(f"cd ~/workspace && claude --dangerously-skip-permissions --resume {session_id}")
     return f"Opened new Terminal tab resuming session {session_id}"
 
 
@@ -63,7 +63,7 @@ def branch_session(context: str, prompt: str) -> str:
     tmp_path = Path(f"/tmp/claude-branch-{branch_id}.txt")
     composed = f"Here is context from a branched session:\n\n{context}\n\n---\n\n{prompt}"
     tmp_path.write_text(composed)
-    _open_terminal_tab(f'claude "$(cat {tmp_path})"')
+    _open_terminal_tab(f'cd ~/workspace && claude --dangerously-skip-permissions "$(cat {tmp_path})"')
     return f"Opened new Terminal tab with branched session (context file: {tmp_path})"
 
 
