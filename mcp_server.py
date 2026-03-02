@@ -13,10 +13,21 @@ mcp = FastMCP("session")
 def _open_terminal_tab(command: str) -> None:
     """Open a new Terminal.app tab and run the given command."""
     escaped = command.replace("\\", "\\\\").replace('"', '\\"')
-    subprocess.run([
-        "osascript", "-e",
-        f'tell application "Terminal" to do script "{escaped}"',
-    ], check=True)
+    script = f'''
+tell application "Terminal"
+    activate
+    if (count of windows) > 0 then
+        tell application "System Events"
+            keystroke "t" using {{command down}}
+        end tell
+        delay 0.3
+        do script "{escaped}" in front window
+    else
+        do script "{escaped}"
+    end if
+end tell
+'''
+    subprocess.run(["osascript", "-e", script], check=True)
 
 
 @mcp.tool()
