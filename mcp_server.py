@@ -23,6 +23,11 @@ def _open_terminal_tab(command: str) -> None:
 def resume_session(session_id: str) -> str:
     """Resume a past Claude Code session in a new Terminal tab.
 
+    This is the PRIMARY tool for opening past sessions. Use this whenever the user
+    asks to "open", "pull up", "branch", "continue", or "resume" a past session.
+    The session_id comes from get_summaries output (the uuid field IS the Claude
+    Code session ID) or from search_history results.
+
     Args:
         session_id: Claude Code session UUID (e.g. '54c77e5a-a32a-42c7-9701-58ebe6c500b2')
     """
@@ -32,10 +37,12 @@ def resume_session(session_id: str) -> str:
 
 @mcp.tool()
 def branch_session(context: str, prompt: str) -> str:
-    """Branch a tangent into a new Claude Code session in a new Terminal tab.
+    """Branch a tangent from the CURRENT session into a new Claude Code session.
 
-    Composes the context and prompt into a single message and launches a new
-    interactive Claude session with it.
+    Use this ONLY when you want to fork a tangent from the current conversation
+    into a fresh session with specific injected context. This creates a NEW session,
+    not a continuation of an existing one. For opening past sessions, use
+    resume_session instead.
 
     Args:
         context: Relevant context gathered from the current session (errors, file contents, tool results, etc.)
