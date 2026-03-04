@@ -15,15 +15,54 @@ TMUX = "/opt/homebrew/bin/tmux"
 WORKSPACE = os.path.expanduser("~/workspace")
 
 
-def _open_in_tmux_tab(command: str, background: bool = False) -> str:
-    """Create a detached tmux session, send the command, then optionally open a Terminal tab."""
+def _get_terminal_app() -> str:
+    """Detect which terminal app is running. Returns 'iterm2' or 'terminal'."""
+    if os.environ.get("ITERM_SESSION_ID") or os.environ.get("TERM_PROGRAM") == "iTerm.app":
+        return "iterm2"
+    return "terminal"
+
+
+def _get_tmux_session() -> str | None:
+    """Get the current tmux session name from the environment."""
+    if not os.environ.get("TMUX"):
+        return None
+    try:
+        result = subprocess.run(
+            [TMUX, "display-message", "-p", "#S"],
+            capture_output=True, text=True, check=True
+        )
+        return result.stdout.strip()
+    except subprocess.CalledProcessError:
+        return None
+
+
+def _open_iterm2_window(command: str, background: bool = False) -> str:
+    """Create a new tmux window in the current session and run command in it.
+
+    background=False: switch to the new window (default tab-open behavior)
+    background=True:  create without stealing focus (-d flag)
+    """
+    session = _get_tmux_session()
+    if not session:
+        raise RuntimeError("Not inside a tmux session — cannot open iTerm2 tmux window")
+
+    window_name = f"claude-{int(time.time())}"
+    cmd = [TMUX, "new-window"]
+    if background:
+        cmd.append("-d")
+    cmd += ["-t", session, "-n", window_name, "-c", WORKSPACE]
+    subprocess.run(cmd, check=True)
+    subprocess.run([TMUX, "send-keys", "-t", f"{session}:{window_name}", command, "Enter"], check=True)
+    return f"{session}:{window_name}"
+
+
+def _open_terminal_tab(command: str, background: bool = False) -> str:
+    """Terminal.app fallback — creates a new detached tmux session and opens a tab via osascript."""
     session = f"claude-{int(time.time())}"
 
-    # Create the session detached and send the command — subprocess args, no quoting issues
     subprocess.run([TMUX, "new-session", "-d", "-s", session, "-c", WORKSPACE], check=True)
     subprocess.run([TMUX, "send-keys", "-t", session, command, "Enter"], check=True)
 
-    # Open a Terminal tab that attaches — simple safe string, no special chars
     attach_cmd = f"{TMUX} attach-session -t {session}"
     if background:
         script = f'''
@@ -62,9 +101,16 @@ end tell
     return session
 
 
+def _open_tab(command: str, background: bool = False) -> str:
+    """Route to iTerm2 tmux window or Terminal.app osascript based on current terminal."""
+    if _get_terminal_app() == "iterm2":
+        return _open_iterm2_window(command, background)
+    return _open_terminal_tab(command, background)
+
+
 @mcp.tool()
 def resume_session(session_id: str, background: bool = False) -> str:
-    """Resume a past Claude Code session in a new Terminal tab.
+    """Resume a past Claude Code session in a new tab.
 
     This is the PRIMARY tool for opening past sessions. Use this whenever the user
     asks to "open", "pull up", "branch", "continue", or "resume" a past session.
@@ -75,10 +121,10 @@ def resume_session(session_id: str, background: bool = False) -> str:
         session_id: Claude Code session UUID (e.g. '54c77e5a-a32a-42c7-9701-58ebe6c500b2')
         background: If True, start in the background without stealing focus. Default False.
     """
-    session = _open_in_tmux_tab(f"claude --dangerously-skip-permissions --resume {session_id}", background)
+    tab = _open_tab(f"claude --dangerously-skip-permissions --resume {session_id}", background)
     if background:
-        return f"Opened background Terminal tab (tmux: {session}) resuming Claude session {session_id} — focus kept on current tab"
-    return f"Opened new Terminal tab (tmux: {session}) resuming Claude session {session_id}"
+        return f"Opened background tab ({tab}) resuming Claude session {session_id} — focus kept on current tab"
+    return f"Opened new tab ({tab}) resuming Claude session {session_id}"
 
 
 @mcp.tool()
@@ -99,10 +145,10 @@ def branch_session(context: str, prompt: str, background: bool = False) -> str:
     tmp_path = Path(f"/tmp/claude-branch-{branch_id}.txt")
     composed = f"Here is context from a branched session:\n\n{context}\n\n---\n\n{prompt}"
     tmp_path.write_text(composed)
-    session = _open_in_tmux_tab(f'claude --dangerously-skip-permissions "$(cat {tmp_path})"', background)
+    tab = _open_tab(f'claude --dangerously-skip-permissions "$(cat {tmp_path})"', background)
     if background:
-        return f"Opened background Terminal tab (tmux: {session}) with branched session — focus kept on current tab"
-    return f"Opened new Terminal tab (tmux: {session}) with branched session"
+        return f"Opened background tab ({tab}) with branched session — focus kept on current tab"
+    return f"Opened new tab ({tab}) with branched session"
 
 
 if __name__ == "__main__":
