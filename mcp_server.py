@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """MCP server for session management — resume past sessions or branch new ones."""
 
+import os
 import subprocess
+import time
 import uuid
 from pathlib import Path
 
@@ -9,10 +11,20 @@ from mcp.server.fastmcp import FastMCP
 
 mcp = FastMCP("session")
 
+TMUX = "/opt/homebrew/bin/tmux"
+WORKSPACE = os.path.expanduser("~/workspace")
 
-def _open_terminal_tab(command: str) -> None:
-    """Open a new Terminal.app tab and run the given command."""
-    escaped = command.replace("\\", "\\\\").replace('"', '\\"')
+
+def _open_in_tmux_tab(command: str) -> str:
+    """Create a detached tmux session, send the command, then open a Terminal tab that attaches to it."""
+    session = f"claude-{int(time.time())}"
+
+    # Create the session detached and send the command — subprocess args, no quoting issues
+    subprocess.run([TMUX, "new-session", "-d", "-s", session, "-c", WORKSPACE], check=True)
+    subprocess.run([TMUX, "send-keys", "-t", session, command, "Enter"], check=True)
+
+    # Open a Terminal tab that attaches — simple safe string, no special chars
+    attach_cmd = f"{TMUX} attach-session -t {session}"
     script = f'''
 tell application "Terminal"
     activate
@@ -21,13 +33,14 @@ tell application "Terminal"
             keystroke "t" using {{command down}}
         end tell
         delay 0.3
-        do script "{escaped}" in front window
+        do script "{attach_cmd}" in front window
     else
-        do script "{escaped}"
+        do script "{attach_cmd}"
     end if
 end tell
 '''
     subprocess.run(["osascript", "-e", script], check=True)
+    return session
 
 
 @mcp.tool()
@@ -42,8 +55,8 @@ def resume_session(session_id: str) -> str:
     Args:
         session_id: Claude Code session UUID (e.g. '54c77e5a-a32a-42c7-9701-58ebe6c500b2')
     """
-    _open_terminal_tab(f"cd ~/workspace && claude --dangerously-skip-permissions --resume {session_id}")
-    return f"Opened new Terminal tab resuming session {session_id}"
+    session = _open_in_tmux_tab(f"claude --dangerously-skip-permissions --resume {session_id}")
+    return f"Opened new Terminal tab (tmux: {session}) resuming Claude session {session_id}"
 
 
 @mcp.tool()
@@ -63,8 +76,8 @@ def branch_session(context: str, prompt: str) -> str:
     tmp_path = Path(f"/tmp/claude-branch-{branch_id}.txt")
     composed = f"Here is context from a branched session:\n\n{context}\n\n---\n\n{prompt}"
     tmp_path.write_text(composed)
-    _open_terminal_tab(f'cd ~/workspace && claude --dangerously-skip-permissions "$(cat {tmp_path})"')
-    return f"Opened new Terminal tab with branched session (context file: {tmp_path})"
+    session = _open_in_tmux_tab(f'claude --dangerously-skip-permissions "$(cat {tmp_path})"')
+    return f"Opened new Terminal tab (tmux: {session}) with branched session"
 
 
 if __name__ == "__main__":
