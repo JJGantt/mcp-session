@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """MCP server for session management — resume past sessions or branch new ones."""
 
+import json
 import os
 import subprocess
 import time
 import uuid
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
@@ -36,7 +38,28 @@ def _get_tmux_session() -> str | None:
         return None
 
 
-def _open_iterm2_window(command: str, background: bool = False) -> str:
+def _find_session_cwd(session_id: str) -> str:
+    """Look up the working directory for a session from history files. Falls back to WORKSPACE."""
+    history_dir = Path.home() / "pi-data" / "history"
+    if not history_dir.exists():
+        return WORKSPACE
+    today = datetime.now()
+    for i in range(14):
+        day = today - timedelta(days=i)
+        f = history_dir / f"{day.strftime('%Y-%m-%d')}.json"
+        if not f.exists():
+            continue
+        try:
+            entries = json.loads(f.read_text())
+            for entry in reversed(entries):
+                if entry.get("session_id") == session_id and entry.get("cwd"):
+                    return entry["cwd"]
+        except Exception:
+            pass
+    return WORKSPACE
+
+
+def _open_iterm2_window(command: str, background: bool = False, cwd: str = WORKSPACE) -> str:
     """Create a new tmux window in the current session and run command in it.
 
     background=False: switch to the new window (default tab-open behavior)
@@ -50,17 +73,17 @@ def _open_iterm2_window(command: str, background: bool = False) -> str:
     cmd = [TMUX, "new-window"]
     if background:
         cmd.append("-d")
-    cmd += ["-t", session, "-n", window_name, "-c", WORKSPACE]
+    cmd += ["-t", session, "-n", window_name, "-c", cwd]
     subprocess.run(cmd, check=True)
     subprocess.run([TMUX, "send-keys", "-t", f"{session}:{window_name}", command, "Enter"], check=True)
     return f"{session}:{window_name}"
 
 
-def _open_terminal_tab(command: str, background: bool = False) -> str:
+def _open_terminal_tab(command: str, background: bool = False, cwd: str = WORKSPACE) -> str:
     """Terminal.app fallback — creates a new detached tmux session and opens a tab via osascript."""
     session = f"claude-{int(time.time())}"
 
-    subprocess.run([TMUX, "new-session", "-d", "-s", session, "-c", WORKSPACE], check=True)
+    subprocess.run([TMUX, "new-session", "-d", "-s", session, "-c", cwd], check=True)
     subprocess.run([TMUX, "send-keys", "-t", session, command, "Enter"], check=True)
 
     attach_cmd = f"{TMUX} attach-session -t {session}"
@@ -101,11 +124,11 @@ end tell
     return session
 
 
-def _open_tab(command: str, background: bool = False) -> str:
+def _open_tab(command: str, background: bool = False, cwd: str = WORKSPACE) -> str:
     """Route to iTerm2 tmux window or Terminal.app osascript based on current terminal."""
     if _get_terminal_app() == "iterm2":
-        return _open_iterm2_window(command, background)
-    return _open_terminal_tab(command, background)
+        return _open_iterm2_window(command, background, cwd)
+    return _open_terminal_tab(command, background, cwd)
 
 
 @mcp.tool()
@@ -121,10 +144,11 @@ def resume_session(session_id: str, background: bool = False) -> str:
         session_id: Claude Code session UUID (e.g. '54c77e5a-a32a-42c7-9701-58ebe6c500b2')
         background: If True, start in the background without stealing focus. Default False.
     """
-    tab = _open_tab(f"claude --dangerously-skip-permissions --resume {session_id}", background)
+    cwd = _find_session_cwd(session_id)
+    tab = _open_tab(f"claude --dangerously-skip-permissions --resume {session_id}", background, cwd)
     if background:
-        return f"Opened background tab ({tab}) resuming Claude session {session_id} — focus kept on current tab"
-    return f"Opened new tab ({tab}) resuming Claude session {session_id}"
+        return f"Opened background tab ({tab}) resuming Claude session {session_id} from {cwd} — focus kept on current tab"
+    return f"Opened new tab ({tab}) resuming Claude session {session_id} from {cwd}"
 
 
 @mcp.tool()
