@@ -23,12 +23,28 @@ def _open_in_tmux_tab(command: str, background: bool = False) -> str:
     subprocess.run([TMUX, "new-session", "-d", "-s", session, "-c", WORKSPACE], check=True)
     subprocess.run([TMUX, "send-keys", "-t", session, command, "Enter"], check=True)
 
-    if background:
-        return session
-
     # Open a Terminal tab that attaches — simple safe string, no special chars
     attach_cmd = f"{TMUX} attach-session -t {session}"
-    script = f'''
+    if background:
+        script = f'''
+set frontApp to name of first application process of application "System Events" whose frontmost is true
+tell application "Terminal"
+    activate
+    if (count of windows) > 0 then
+        tell application "System Events"
+            keystroke "t" using {{command down}}
+        end tell
+        delay 0.3
+        do script "{attach_cmd}" in front window
+    else
+        do script "{attach_cmd}"
+    end if
+end tell
+delay 0.2
+tell application frontApp to activate
+'''
+    else:
+        script = f'''
 tell application "Terminal"
     activate
     if (count of windows) > 0 then
@@ -61,7 +77,7 @@ def resume_session(session_id: str, background: bool = False) -> str:
     """
     session = _open_in_tmux_tab(f"claude --dangerously-skip-permissions --resume {session_id}", background)
     if background:
-        return f"Started background tmux session '{session}' resuming Claude session {session_id}. Attach with: tmux attach -t {session}"
+        return f"Opened background Terminal tab (tmux: {session}) resuming Claude session {session_id} — focus kept on current tab"
     return f"Opened new Terminal tab (tmux: {session}) resuming Claude session {session_id}"
 
 
@@ -85,7 +101,7 @@ def branch_session(context: str, prompt: str, background: bool = False) -> str:
     tmp_path.write_text(composed)
     session = _open_in_tmux_tab(f'claude --dangerously-skip-permissions "$(cat {tmp_path})"', background)
     if background:
-        return f"Started background tmux session '{session}'. Attach with: tmux attach -t {session}"
+        return f"Opened background Terminal tab (tmux: {session}) with branched session — focus kept on current tab"
     return f"Opened new Terminal tab (tmux: {session}) with branched session"
 
 
