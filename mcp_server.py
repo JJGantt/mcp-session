@@ -13,7 +13,6 @@ from mcp.server.fastmcp import FastMCP
 
 mcp = FastMCP("session")
 
-TMUX = "/opt/homebrew/bin/tmux"
 WORKSPACE = os.path.expanduser("~/workspace")
 
 
@@ -22,20 +21,6 @@ def _get_terminal_app() -> str:
     if os.environ.get("ITERM_SESSION_ID") or os.environ.get("TERM_PROGRAM") == "iTerm.app":
         return "iterm2"
     return "terminal"
-
-
-def _get_tmux_session() -> str | None:
-    """Get the current tmux session name from the environment."""
-    if not os.environ.get("TMUX"):
-        return None
-    try:
-        result = subprocess.run(
-            [TMUX, "display-message", "-p", "#S"],
-            capture_output=True, text=True, check=True
-        )
-        return result.stdout.strip()
-    except subprocess.CalledProcessError:
-        return None
 
 
 def _find_session_cwd(session_id: str) -> str:
@@ -59,34 +44,49 @@ def _find_session_cwd(session_id: str) -> str:
     return WORKSPACE
 
 
-def _open_iterm2_window(command: str, background: bool = False, cwd: str = WORKSPACE) -> str:
-    """Create a new tmux window in the current session and run command in it.
+def _open_iterm2_tab(command: str, background: bool = False, cwd: str = WORKSPACE) -> str:
+    """Open a new iTerm2 tab via AppleScript and run command in it."""
+    tab_id = f"claude-{int(time.time())}"
+    escaped_command = command.replace('\\', '\\\\').replace('"', '\\"')
+    escaped_cwd = cwd.replace('\\', '\\\\').replace('"', '\\"')
 
-    background=False: switch to the new window (default tab-open behavior)
-    background=True:  create without stealing focus (-d flag)
-    """
-    session = _get_tmux_session()
-    if not session:
-        raise RuntimeError("Not inside a tmux session — cannot open iTerm2 tmux window")
-
-    window_name = f"claude-{int(time.time())}"
-    cmd = [TMUX, "new-window"]
     if background:
-        cmd.append("-d")
-    cmd += ["-t", session, "-n", window_name, "-c", cwd]
-    subprocess.run(cmd, check=True)
-    subprocess.run([TMUX, "send-keys", "-t", f"{session}:{window_name}", command, "Enter"], check=True)
-    return f"{session}:{window_name}"
+        script = f'''
+set frontApp to name of first application process of application "System Events" whose frontmost is true
+tell application "iTerm2"
+    tell current window
+        create tab with default profile
+        tell current session of current tab
+            write text "cd \\"{escaped_cwd}\\" && {escaped_command}"
+        end tell
+    end tell
+end tell
+delay 0.1
+tell application frontApp to activate
+'''
+    else:
+        script = f'''
+tell application "iTerm2"
+    activate
+    tell current window
+        create tab with default profile
+        tell current session of current tab
+            write text "cd \\"{escaped_cwd}\\" && {escaped_command}"
+        end tell
+    end tell
+end tell
+'''
+    subprocess.run(["osascript", "-e", script], check=True)
+    return tab_id
 
 
 def _open_terminal_tab(command: str, background: bool = False, cwd: str = WORKSPACE) -> str:
-    """Terminal.app fallback — creates a new detached tmux session and opens a tab via osascript."""
-    session = f"claude-{int(time.time())}"
+    """Open a new Terminal.app tab via AppleScript and run command in it."""
+    tab_id = f"claude-{int(time.time())}"
+    escaped_command = command.replace('\\', '\\\\').replace('"', '\\"')
+    escaped_cwd = cwd.replace('\\', '\\\\').replace('"', '\\"')
+    full_command = f"cd \\"{escaped_cwd}\\" && {escaped_command}"
 
-    subprocess.run([TMUX, "new-session", "-d", "-s", session, "-c", cwd], check=True)
-    subprocess.run([TMUX, "send-keys", "-t", session, command, "Enter"], check=True)
-
-    attach_cmd = f"{TMUX} attach-session -t {session}"
     if background:
         script = f'''
 set frontApp to name of first application process of application "System Events" whose frontmost is true
@@ -97,9 +97,9 @@ tell application "Terminal"
             keystroke "t" using {{command down}}
         end tell
         delay 0.3
-        do script "{attach_cmd}" in front window
+        do script "{full_command}" in front window
     else
-        do script "{attach_cmd}"
+        do script "{full_command}"
     end if
 end tell
 delay 0.2
@@ -114,20 +114,20 @@ tell application "Terminal"
             keystroke "t" using {{command down}}
         end tell
         delay 0.3
-        do script "{attach_cmd}" in front window
+        do script "{full_command}" in front window
     else
-        do script "{attach_cmd}"
+        do script "{full_command}"
     end if
 end tell
 '''
     subprocess.run(["osascript", "-e", script], check=True)
-    return session
+    return tab_id
 
 
 def _open_tab(command: str, background: bool = False, cwd: str = WORKSPACE) -> str:
-    """Route to iTerm2 tmux window or Terminal.app osascript based on current terminal."""
+    """Route to iTerm2 or Terminal.app based on current terminal."""
     if _get_terminal_app() == "iterm2":
-        return _open_iterm2_window(command, background, cwd)
+        return _open_iterm2_tab(command, background, cwd)
     return _open_terminal_tab(command, background, cwd)
 
 
